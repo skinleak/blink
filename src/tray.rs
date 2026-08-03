@@ -1,4 +1,4 @@
-use std::thread;
+use std::{thread, time::Duration};
 
 use ashpd::{
     AppID,
@@ -18,7 +18,7 @@ use crate::{
     app::{self, AppAction},
     capture::CaptureMode,
     error::{BlinkError, Result},
-    notification,
+    notification, settings,
     ui::UiMessage,
 };
 
@@ -64,7 +64,9 @@ impl Tray for BlinkTray {
 fn menu_item(label: &str, action: AppAction) -> ksni::MenuItem<BlinkTray> {
     StandardItem {
         label: label.to_owned(),
-        activate: Box::new(move |tray: &mut BlinkTray| queue_action(&tray.sender, action)),
+        activate: Box::new(move |tray: &mut BlinkTray| {
+            queue_action(&tray.sender, action.clone());
+        }),
         ..Default::default()
     }
     .into()
@@ -108,6 +110,7 @@ async fn run(
     ui_sender: std::sync::mpsc::Sender<UiMessage>,
 ) {
     register_host_application().await;
+    let mut settings = settings::Settings::load();
 
     let tray_handle = match (BlinkTray {
         sender: sender.clone(),
@@ -143,10 +146,46 @@ async fn run(
     while let Some(action) = receiver.recv().await {
         match action {
             AppAction::Capture(mode) => {
-                if let Err(error) = app::capture(mode, true).await
-                    && !error.is_cancelled()
-                {
-                    eprintln!("Blink: {error}");
+                let _ = ui_sender.send(UiMessage::HideWindow);
+                tokio::time::sleep(Duration::from_millis(120)).await;
+                if matches!(mode, CaptureMode::Area) {
+                    match app::prepare_area_capture().await {
+                        Ok(source) => {
+                            let _ = ui_sender.send(UiMessage::BeginAreaSelection(source));
+                        }
+                        Err(error) if error.is_cancelled() => {}
+                        Err(error) => report_error(&ui_sender, &error).await,
+                    }
+                } else {
+                    match app::capture(mode, true).await {
+                        Ok(path) if settings.copy_to_clipboard => {
+                            let _ = ui_sender.send(UiMessage::CopyToClipboard(path));
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.is_cancelled() => {}
+                        Err(error) => eprintln!("Blink: {error}"),
+                    }
+                }
+            }
+            AppAction::FinishAreaCapture { source, region } => {
+                match app::finish_area_capture(&source, region).await {
+                    Ok(path) if settings.copy_to_clipboard => {
+                        let _ = ui_sender.send(UiMessage::CopyToClipboard(path));
+                    }
+                    Ok(_) => {}
+                    Err(error) => report_error(&ui_sender, &error).await,
+                }
+            }
+            AppAction::SetCopyToClipboard(enabled) => {
+                settings.copy_to_clipboard = enabled;
+                match settings.save() {
+                    Ok(()) => {
+                        let state = if enabled { "enabled" } else { "disabled" };
+                        let _ = ui_sender.send(UiMessage::Status(format!(
+                            "Automatic clipboard copy {state}"
+                        )));
+                    }
+                    Err(error) => report_error(&ui_sender, &error).await,
                 }
             }
             AppAction::ShowWindow => {

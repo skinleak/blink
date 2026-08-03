@@ -18,6 +18,14 @@ pub struct CapturedImage {
     pub source: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct NormalizedRegion {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 pub trait CaptureBackend {
     fn capture(&self, mode: CaptureMode) -> impl Future<Output = Result<CapturedImage>> + Send;
 }

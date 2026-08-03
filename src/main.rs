@@ -4,6 +4,7 @@ mod cli;
 mod error;
 mod notification;
 mod save;
+mod settings;
 mod tray;
 mod ui;
 

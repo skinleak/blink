@@ -1,15 +1,17 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 
 use gtk::{
-    Align, Application, ApplicationWindow, Box as GtkBox, Button, CssProvider, HeaderBar, Image,
-    Label, MenuButton, Orientation, gio, glib, prelude::*,
+    Align, Application, ApplicationWindow, Box as GtkBox, Button, CssProvider, DrawingArea,
+    EventControllerKey, GestureDrag, HeaderBar, Image, Label, MenuButton, Orientation, Overlay,
+    Picture, Switch, gio, glib, prelude::*,
 };
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::{
     app::AppAction,
-    capture::CaptureMode,
+    capture::{CaptureMode, NormalizedRegion},
     error::Result,
+    settings,
     tray::{self, APP_ID},
 };
 
@@ -58,15 +60,24 @@ headerbar {
   border-radius: 10px;
   padding: 10px;
 }
+.setting-row {
+  background: #1b1e25;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px;
+}
 .status { color: #9da5b4; font-size: 12px; }
 "#;
 
 #[derive(Debug)]
 pub enum UiMessage {
     ShowWindow,
+    HideWindow,
     Quit,
     Status(String),
     Shortcuts(Vec<(String, String)>),
+    BeginAreaSelection(std::path::PathBuf),
+    CopyToClipboard(std::path::PathBuf),
 }
 
 pub fn run() -> Result<()> {
@@ -199,6 +210,32 @@ fn build_window(
     configure.connect_clicked(move |_| queue(&shortcut_sender, AppAction::ConfigureShortcuts));
     content.append(&configure);
 
+    let clipboard_row = GtkBox::new(Orientation::Horizontal, 12);
+    clipboard_row.add_css_class("setting-row");
+    let clipboard_text = GtkBox::new(Orientation::Vertical, 2);
+    clipboard_text.set_hexpand(true);
+    let clipboard_title = Label::new(Some("Copy captures to clipboard"));
+    clipboard_title.set_halign(Align::Start);
+    clipboard_title.add_css_class("action-title");
+    clipboard_text.append(&clipboard_title);
+    let clipboard_copy = Label::new(Some("Also copy each saved screenshot automatically"));
+    clipboard_copy.set_halign(Align::Start);
+    clipboard_copy.add_css_class("action-copy");
+    clipboard_text.append(&clipboard_copy);
+    clipboard_row.append(&clipboard_text);
+    let clipboard_switch = Switch::new();
+    clipboard_switch.set_valign(Align::Center);
+    clipboard_switch.set_active(settings::Settings::load().copy_to_clipboard);
+    let clipboard_sender = sender.clone();
+    clipboard_switch.connect_active_notify(move |switch| {
+        queue(
+            &clipboard_sender,
+            AppAction::SetCopyToClipboard(switch.is_active()),
+        );
+    });
+    clipboard_row.append(&clipboard_switch);
+    content.append(&clipboard_row);
+
     let status = Label::new(Some("Screenshots are saved to ~/Pictures/Blink"));
     status.set_margin_top(4);
     status.add_css_class("status");
@@ -213,6 +250,7 @@ fn build_window(
         status,
         shortcut_labels,
         receiver,
+        sender,
     );
 }
 
@@ -269,7 +307,7 @@ fn install_actions(
     ] {
         let simple_action = gio::SimpleAction::new(name, None);
         let sender = sender.clone();
-        simple_action.connect_activate(move |_, _| queue(&sender, action));
+        simple_action.connect_activate(move |_, _| queue(&sender, action.clone()));
         application.add_action(&simple_action);
     }
 }
@@ -280,11 +318,13 @@ fn listen_for_worker_messages(
     status: Label,
     shortcut_labels: Rc<RefCell<HashMap<String, Label>>>,
     receiver: std::sync::mpsc::Receiver<UiMessage>,
+    sender: tokio::sync::mpsc::UnboundedSender<AppAction>,
 ) {
     glib::timeout_add_local(Duration::from_millis(80), move || {
         while let Ok(message) = receiver.try_recv() {
             match message {
                 UiMessage::ShowWindow => window.present(),
+                UiMessage::HideWindow => window.hide(),
                 UiMessage::Quit => {
                     application.quit();
                     return glib::ControlFlow::Break;
@@ -298,10 +338,163 @@ fn listen_for_worker_messages(
                     }
                     status.set_text("Global shortcuts are active");
                 }
+                UiMessage::BeginAreaSelection(source) => {
+                    show_area_selector(&application, &window, source, sender.clone());
+                }
+                UiMessage::CopyToClipboard(path) => match gtk::gdk::Texture::from_filename(&path) {
+                    Ok(texture) => {
+                        if let Some(display) = gtk::gdk::Display::default() {
+                            display.clipboard().set_texture(&texture);
+                            status.set_text("Screenshot saved and copied to clipboard");
+                        } else {
+                            status.set_text("Screenshot saved, but the clipboard is unavailable");
+                        }
+                    }
+                    Err(error) => status.set_text(&format!(
+                        "Screenshot saved, but clipboard copy failed: {error}"
+                    )),
+                },
             }
         }
         glib::ControlFlow::Continue
     });
+}
+
+#[derive(Default)]
+struct Selection {
+    start_x: f64,
+    start_y: f64,
+    current_x: f64,
+    current_y: f64,
+    active: bool,
+}
+
+fn show_area_selector(
+    application: &Application,
+    main_window: &ApplicationWindow,
+    source: std::path::PathBuf,
+    sender: tokio::sync::mpsc::UnboundedSender<AppAction>,
+) {
+    let selector = ApplicationWindow::builder()
+        .application(application)
+        .title("Select an area")
+        .decorated(false)
+        .build();
+    selector.set_cursor_from_name(Some("crosshair"));
+
+    let overlay = Overlay::new();
+    let picture = Picture::for_filename(&source);
+    picture.set_content_fit(gtk::ContentFit::Fill);
+    picture.set_hexpand(true);
+    picture.set_vexpand(true);
+    overlay.set_child(Some(&picture));
+
+    let drawing = DrawingArea::new();
+    drawing.set_hexpand(true);
+    drawing.set_vexpand(true);
+    let selection = Rc::new(RefCell::new(Selection::default()));
+    let draw_selection = selection.clone();
+    drawing.set_draw_func(move |_, context, width, height| {
+        context.set_source_rgba(0.02, 0.03, 0.05, 0.58);
+        context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
+        let _ = context.fill();
+
+        let selection = draw_selection.borrow();
+        if selection.active {
+            let x = selection.start_x.min(selection.current_x);
+            let y = selection.start_y.min(selection.current_y);
+            let width = (selection.current_x - selection.start_x).abs();
+            let height = (selection.current_y - selection.start_y).abs();
+            context.set_operator(gtk::cairo::Operator::Clear);
+            context.rectangle(x, y, width, height);
+            let _ = context.fill();
+            context.set_operator(gtk::cairo::Operator::Over);
+            context.set_source_rgb(0.43, 0.36, 0.99);
+            context.set_line_width(2.0);
+            context.rectangle(
+                x + 1.0,
+                y + 1.0,
+                (width - 2.0).max(0.0),
+                (height - 2.0).max(0.0),
+            );
+            let _ = context.stroke();
+        }
+    });
+
+    let drag = GestureDrag::new();
+    let begin_selection = selection.clone();
+    let begin_drawing = drawing.clone();
+    drag.connect_drag_begin(move |_, x, y| {
+        let mut selection = begin_selection.borrow_mut();
+        selection.start_x = x;
+        selection.start_y = y;
+        selection.current_x = x;
+        selection.current_y = y;
+        selection.active = true;
+        begin_drawing.queue_draw();
+    });
+    let update_selection = selection.clone();
+    let update_drawing = drawing.clone();
+    drag.connect_drag_update(move |_, offset_x, offset_y| {
+        let mut selection = update_selection.borrow_mut();
+        selection.current_x = selection.start_x + offset_x;
+        selection.current_y = selection.start_y + offset_y;
+        update_drawing.queue_draw();
+    });
+    let end_selection = selection.clone();
+    let end_drawing = drawing.clone();
+    let end_selector = selector.clone();
+    let end_main_window = main_window.clone();
+    let end_source = source.clone();
+    drag.connect_drag_end(move |_, offset_x, offset_y| {
+        let selection = end_selection.borrow();
+        let end_x = selection.start_x + offset_x;
+        let end_y = selection.start_y + offset_y;
+        let x = selection.start_x.min(end_x);
+        let y = selection.start_y.min(end_y);
+        let width = (end_x - selection.start_x).abs();
+        let height = (end_y - selection.start_y).abs();
+        let view_width = f64::from(end_drawing.width()).max(1.0);
+        let view_height = f64::from(end_drawing.height()).max(1.0);
+        drop(selection);
+
+        if width >= 3.0 && height >= 3.0 {
+            queue(
+                &sender,
+                AppAction::FinishAreaCapture {
+                    source: end_source.clone(),
+                    region: NormalizedRegion {
+                        x: x / view_width,
+                        y: y / view_height,
+                        width: width / view_width,
+                        height: height / view_height,
+                    },
+                },
+            );
+            end_selector.close();
+        } else {
+            end_selector.close();
+            end_main_window.present();
+        }
+    });
+    drawing.add_controller(drag);
+    overlay.add_overlay(&drawing);
+
+    let keys = EventControllerKey::new();
+    let key_selector = selector.clone();
+    let key_main_window = main_window.clone();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if key == gtk::gdk::Key::Escape {
+            key_selector.close();
+            key_main_window.present();
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    selector.add_controller(keys);
+    selector.set_child(Some(&overlay));
+    selector.fullscreen();
+    selector.present();
 }
 
 fn queue(sender: &tokio::sync::mpsc::UnboundedSender<AppAction>, action: AppAction) {

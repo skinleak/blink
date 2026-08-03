@@ -36,6 +36,12 @@ pub enum BlinkError {
         source: std::io::Error,
     },
 
+    #[error("could not process screenshot image {path}: {source}")]
+    Image {
+        path: PathBuf,
+        source: image::ImageError,
+    },
+
     #[error("could not open screenshots folder: {0}")]
     OpenFolder(String),
 
@@ -44,6 +50,12 @@ pub enum BlinkError {
 
     #[error("could not start the application worker: {0}")]
     Worker(std::io::Error),
+
+    #[error("could not save settings to {path}: {source}")]
+    Settings {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 impl BlinkError {
