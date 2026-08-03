@@ -17,16 +17,23 @@ can also place every completed capture directly on the desktop clipboard.
 ## Application interface
 
 Running `blink` opens Blink's own GTK window. The capture cards hide the window
-before capture begins. Area capture displays Blink's own frozen-screen overlay;
-drag to select, or press `Escape` to cancel. The application menu provides:
+before capture begins. Area capture immediately displays Blink's own transparent
+overlay over the live desktop; drag to select, or press `Escape` to cancel. Blink
+requests the authorized pixels only after the region is chosen. The application
+menu provides:
 
 - Open Screenshots Folder
 - Configure Shortcuts
 - Quit Blink
 
-The clipboard switch is off by default. When enabled, Blink continues saving the
-PNG to disk and also copies the image so it can be pasted into chat, documents, or
-an image editor. Its value is stored in `~/.config/blink/settings.conf`.
+The clipboard switch is on by default for fresh installations. When enabled,
+Blink saves the PNG and also copies the finished image so it can be pasted into
+chat, documents, or an image editor. Its value is stored in
+`~/.config/blink/settings.conf`.
+
+Completed screenshots are always stored only under `~/Pictures/Blink`. Files
+returned by the portal are treated as staging input and removed after Blink has
+copied or cropped them into its own directory.
 
 Closing the window hides it instead of ending the background application. Click
 the tray icon to show it again. The tray menu also keeps direct capture actions
@@ -58,8 +65,8 @@ and optional CLI interface.
 Blink uses the freedesktop Screenshot portal through `ashpd`. It never calls
 `gnome-screenshot`, `scrot`, ImageMagick, Flameshot, or `xdg-open`.
 
-- **Wayland:** GNOME/the compositor authorizes access to a frozen screen image,
-  then Blink provides its own area-selection overlay and performs the crop.
+- **Wayland:** Blink provides its own live area-selection overlay, then GNOME/the
+  compositor authorizes access to the screen image and Blink performs the crop.
   Window selection remains compositor-controlled because generic Wayland does not
   expose other applications' window geometry. Blink does not bypass Wayland
   security.

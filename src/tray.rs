@@ -149,13 +149,7 @@ async fn run(
                 let _ = ui_sender.send(UiMessage::HideWindow);
                 tokio::time::sleep(Duration::from_millis(120)).await;
                 if matches!(mode, CaptureMode::Area) {
-                    match app::prepare_area_capture().await {
-                        Ok(source) => {
-                            let _ = ui_sender.send(UiMessage::BeginAreaSelection(source));
-                        }
-                        Err(error) if error.is_cancelled() => {}
-                        Err(error) => report_error(&ui_sender, &error).await,
-                    }
+                    let _ = ui_sender.send(UiMessage::BeginAreaSelection);
                 } else {
                     match app::capture(mode, true).await {
                         Ok(path) if settings.copy_to_clipboard => {
@@ -167,8 +161,9 @@ async fn run(
                     }
                 }
             }
-            AppAction::FinishAreaCapture { source, region } => {
-                match app::finish_area_capture(&source, region).await {
+            AppAction::FinishAreaCapture { region } => {
+                tokio::time::sleep(Duration::from_millis(120)).await;
+                match app::finish_area_capture(region).await {
                     Ok(path) if settings.copy_to_clipboard => {
                         let _ = ui_sender.send(UiMessage::CopyToClipboard(path));
                     }

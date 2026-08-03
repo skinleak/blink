@@ -43,6 +43,8 @@ pub fn save_png(source: &Path) -> Result<PathBuf> {
             source,
         });
     }
+    drop(output);
+    remove_portal_staging_file(source);
     Ok(destination)
 }
 
@@ -77,7 +79,20 @@ pub fn save_cropped_png(source: &Path, region: NormalizedRegion) -> Result<PathB
             source,
         });
     }
+    drop(output);
+    remove_portal_staging_file(source);
     Ok(destination)
+}
+
+fn remove_portal_staging_file(source: &Path) {
+    match fs::remove_file(source) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "Blink: screenshot was saved, but portal staging file {} could not be removed: {error}",
+            source.display()
+        ),
+    }
 }
 
 fn create_destination() -> Result<(PathBuf, fs::File)> {

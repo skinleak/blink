@@ -4,9 +4,17 @@ use directories::BaseDirs;
 
 use crate::error::{BlinkError, Result};
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct Settings {
     pub copy_to_clipboard: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            copy_to_clipboard: true,
+        }
+    }
 }
 
 impl Settings {
@@ -56,7 +64,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_does_not_modify_clipboard() {
-        assert!(!Settings::default().copy_to_clipboard);
+    fn clipboard_copy_is_enabled_by_default() {
+        assert!(Settings::default().copy_to_clipboard);
     }
 }

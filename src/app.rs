@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    os::fd::AsFd,
-    path::{Path, PathBuf},
-};
+use std::{fs::File, os::fd::AsFd, path::PathBuf};
 
 use ashpd::desktop::open_uri::OpenDirectoryRequest;
 
@@ -15,10 +11,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum AppAction {
     Capture(CaptureMode),
-    FinishAreaCapture {
-        source: PathBuf,
-        region: NormalizedRegion,
-    },
+    FinishAreaCapture { region: NormalizedRegion },
     SetCopyToClipboard(bool),
     ShowWindow,
     OpenFolder,
@@ -56,16 +49,10 @@ async fn capture_inner(mode: CaptureMode) -> Result<PathBuf> {
     save::save_png(&image.source)
 }
 
-pub async fn prepare_area_capture() -> Result<PathBuf> {
-    eprintln!("Blink: preparing custom area capture");
-    PortalBackend
-        .capture(CaptureMode::Screen)
-        .await
-        .map(|image| image.source)
-}
-
-pub async fn finish_area_capture(source: &Path, region: NormalizedRegion) -> Result<PathBuf> {
-    let result = save::save_cropped_png(source, region);
+pub async fn finish_area_capture(region: NormalizedRegion) -> Result<PathBuf> {
+    eprintln!("Blink: capturing selected area");
+    let image = PortalBackend.capture(CaptureMode::Screen).await?;
+    let result = save::save_cropped_png(&image.source, region);
     if let Ok(path) = &result {
         println!("Saved screenshot to {}", path.display());
         if let Err(error) = notification::success(path).await {

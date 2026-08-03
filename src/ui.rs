@@ -2,8 +2,8 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 
 use gtk::{
     Align, Application, ApplicationWindow, Box as GtkBox, Button, CssProvider, DrawingArea,
-    EventControllerKey, GestureDrag, HeaderBar, Image, Label, MenuButton, Orientation, Overlay,
-    Picture, Switch, gio, glib, prelude::*,
+    EventControllerKey, GestureDrag, HeaderBar, Image, Label, MenuButton, Orientation, Switch, gio,
+    glib, prelude::*,
 };
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -66,6 +66,7 @@ headerbar {
   border-radius: 10px;
   padding: 12px;
 }
+.area-selector { background: transparent; }
 .status { color: #9da5b4; font-size: 12px; }
 "#;
 
@@ -76,7 +77,7 @@ pub enum UiMessage {
     Quit,
     Status(String),
     Shortcuts(Vec<(String, String)>),
-    BeginAreaSelection(std::path::PathBuf),
+    BeginAreaSelection,
     CopyToClipboard(std::path::PathBuf),
 }
 
@@ -338,8 +339,8 @@ fn listen_for_worker_messages(
                     }
                     status.set_text("Global shortcuts are active");
                 }
-                UiMessage::BeginAreaSelection(source) => {
-                    show_area_selector(&application, &window, source, sender.clone());
+                UiMessage::BeginAreaSelection => {
+                    show_area_selector(&application, &window, sender.clone());
                 }
                 UiMessage::CopyToClipboard(path) => match gtk::gdk::Texture::from_filename(&path) {
                     Ok(texture) => {
@@ -372,7 +373,6 @@ struct Selection {
 fn show_area_selector(
     application: &Application,
     main_window: &ApplicationWindow,
-    source: std::path::PathBuf,
     sender: tokio::sync::mpsc::UnboundedSender<AppAction>,
 ) {
     let selector = ApplicationWindow::builder()
@@ -380,18 +380,14 @@ fn show_area_selector(
         .title("Select an area")
         .decorated(false)
         .build();
+    selector.add_css_class("area-selector");
     selector.set_cursor_from_name(Some("crosshair"));
-
-    let overlay = Overlay::new();
-    let picture = Picture::for_filename(&source);
-    picture.set_content_fit(gtk::ContentFit::Fill);
-    picture.set_hexpand(true);
-    picture.set_vexpand(true);
-    overlay.set_child(Some(&picture));
 
     let drawing = DrawingArea::new();
     drawing.set_hexpand(true);
     drawing.set_vexpand(true);
+    drawing.set_can_target(true);
+    drawing.set_focusable(true);
     let selection = Rc::new(RefCell::new(Selection::default()));
     let draw_selection = selection.clone();
     drawing.set_draw_func(move |_, context, width, height| {
@@ -422,6 +418,7 @@ fn show_area_selector(
     });
 
     let drag = GestureDrag::new();
+    drag.set_propagation_phase(gtk::PropagationPhase::Capture);
     let begin_selection = selection.clone();
     let begin_drawing = drawing.clone();
     drag.connect_drag_begin(move |_, x, y| {
@@ -445,7 +442,6 @@ fn show_area_selector(
     let end_drawing = drawing.clone();
     let end_selector = selector.clone();
     let end_main_window = main_window.clone();
-    let end_source = source.clone();
     drag.connect_drag_end(move |_, offset_x, offset_y| {
         let selection = end_selection.borrow();
         let end_x = selection.start_x + offset_x;
@@ -459,10 +455,10 @@ fn show_area_selector(
         drop(selection);
 
         if width >= 3.0 && height >= 3.0 {
+            end_selector.close();
             queue(
                 &sender,
                 AppAction::FinishAreaCapture {
-                    source: end_source.clone(),
                     region: NormalizedRegion {
                         x: x / view_width,
                         y: y / view_height,
@@ -471,14 +467,12 @@ fn show_area_selector(
                     },
                 },
             );
-            end_selector.close();
         } else {
             end_selector.close();
             end_main_window.present();
         }
     });
     drawing.add_controller(drag);
-    overlay.add_overlay(&drawing);
 
     let keys = EventControllerKey::new();
     let key_selector = selector.clone();
@@ -492,9 +486,10 @@ fn show_area_selector(
         glib::Propagation::Proceed
     });
     selector.add_controller(keys);
-    selector.set_child(Some(&overlay));
+    selector.set_child(Some(&drawing));
     selector.fullscreen();
     selector.present();
+    drawing.grab_focus();
 }
 
 fn queue(sender: &tokio::sync::mpsc::UnboundedSender<AppAction>, action: AppAction) {
