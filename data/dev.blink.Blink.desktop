@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Blink
+GenericName=Screenshot Utility
+Comment=Capture areas, screens, and windows from the system tray
+Exec=blink
+Icon=camera-photo
+Terminal=false
+StartupNotify=false
+Categories=Graphics;Utility;
+Keywords=screenshot;screen;capture;
