@@ -8,6 +8,15 @@ use crate::{
     notification, save,
 };
 
+#[derive(Clone, Copy, Debug)]
+pub enum AppAction {
+    Capture(CaptureMode),
+    ShowWindow,
+    OpenFolder,
+    ConfigureShortcuts,
+    Quit,
+}
+
 pub async fn capture(mode: CaptureMode, notify_errors: bool) -> Result<PathBuf> {
     eprintln!("Blink: starting {mode:?} capture");
     let result = capture_inner(mode).await;

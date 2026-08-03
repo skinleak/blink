@@ -5,25 +5,31 @@ mod error;
 mod notification;
 mod save;
 mod tray;
+mod ui;
 
 use clap::Parser;
 
 use crate::{cli::Cli, error::Result};
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
-    if let Err(error) = run().await {
+fn main() {
+    if let Err(error) = run() {
         eprintln!("Blink: {error}");
         std::process::exit(1);
     }
 }
 
-async fn run() -> Result<()> {
+fn run() -> Result<()> {
     match Cli::parse().command {
-        Some(command) => match app::capture(command.into(), false).await {
-            Err(error) if error.is_cancelled() => Ok(()),
-            result => result.map(|_| ()),
-        },
-        None => tray::run().await,
+        Some(command) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(error::BlinkError::Runtime)?;
+            match runtime.block_on(app::capture(command.into(), false)) {
+                Err(error) if error.is_cancelled() => Ok(()),
+                result => result.map(|_| ()),
+            }
+        }
+        None => ui::run(),
     }
 }

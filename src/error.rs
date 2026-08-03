@@ -39,8 +39,11 @@ pub enum BlinkError {
     #[error("could not open screenshots folder: {0}")]
     OpenFolder(String),
 
-    #[error("could not start the system tray: {0}")]
-    Tray(String),
+    #[error("could not start the async runtime: {0}")]
+    Runtime(std::io::Error),
+
+    #[error("could not start the application worker: {0}")]
+    Worker(std::io::Error),
 }
 
 impl BlinkError {

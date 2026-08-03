@@ -1,153 +1,158 @@
 # Blink
 
-Blink is a small native Linux screenshot utility written in Rust. It runs without
-a main window, exposes capture actions from a system tray menu, and also provides
-CLI commands suitable for desktop keyboard shortcuts.
+Blink is a small native Linux screenshot application written in Rust and GTK 4.
+It provides a compact capture window, system tray integration, and user-configured
+global shortcuts without a browser engine or permanently large interface.
 
-This is the first minimal version. It captures areas, screens, and windows, saves
-PNG files under `~/Pictures/Blink`, and sends a desktop notification after a
-successful save.
+The first version deliberately stays focused on three actions:
 
-## Platform behavior
+- Capture Area
+- Capture Screen
+- Capture Window
 
-Blink uses the freedesktop Screenshot portal through `ashpd`. It does not invoke
+Screenshots are saved as PNG files under `~/Pictures/Blink` and followed by a
+native desktop notification.
+
+## Application interface
+
+Running `blink` opens Blink's own GTK window. The three capture cards hide the
+window before asking the compositor to capture. The application menu provides:
+
+- Open Screenshots Folder
+- Configure Shortcuts
+- Quit Blink
+
+Closing the window hides it instead of ending the background application. Click
+the tray icon to show it again. The tray menu also keeps direct capture actions
+available.
+
+## Global shortcuts
+
+Blink uses the freedesktop Global Shortcuts portal. On the first run, press
+**Configure global shortcuts** and GNOME will ask you to approve or change these
+suggested bindings:
+
+| Action | Suggested binding |
+| --- | --- |
+| Capture Area | `Print` |
+| Capture Screen | `Shift+Print` |
+| Capture Window | `Alt+Print` |
+
+The portal owns the binding dialog and resolves conflicts, so Blink does not
+silently steal GNOME shortcuts. Use **Configure global shortcuts** in Blink to
+change the accepted bindings later. The shortcuts shown on Blink's capture cards
+are updated from the portal.
+
+The application must remain running for its global shortcuts to be active. Older
+desktops without the Global Shortcuts portal can still use the window, tray menu,
+and optional CLI interface.
+
+## Wayland and X11 behavior
+
+Blink uses the freedesktop Screenshot portal through `ashpd`. It never calls
 `gnome-screenshot`, `scrot`, ImageMagick, Flameshot, or `xdg-open`.
 
-- **Wayland:** GNOME/the compositor performs the capture and presents protected
-  selection UI. Blink does not bypass Wayland security. Screenshot portal v3 can
-  constrain the chooser to area, screen, or window. Older portal backends may
-  ignore that target hint and show their general interactive chooser for area and
-  window capture.
-- **X11:** This version deliberately uses the same portal backend. Ubuntu's GNOME
-  portal supports X11 sessions and gives consistent permission and chooser
-  behavior. A native X11 selection backend can be added behind the existing
-  `CaptureBackend` abstraction later.
-- **Screens:** The compositor decides whether “screen” means one display or the
-  complete desktop on a multi-monitor setup. Explicit monitor selection is not in
-  this version.
-
-The tray uses the StatusNotifierItem D-Bus specification through `ksni`. Ubuntu's
-GNOME session normally includes AppIndicator support. On stock GNOME without a
-StatusNotifierItem/AppIndicator extension, Blink can run but the tray icon will
-not be visible.
+- **Wayland:** GNOME/the compositor performs protected area and window selection.
+  Blink does not bypass Wayland security.
+- **X11:** This version uses the same portal backend for consistent behavior. The
+  capture abstraction allows a dedicated native X11 backend later.
+- **Portal versions:** Screenshot portal v3 can constrain selection to area,
+  screen, or window. Older backends may show a general chooser for interactive
+  captures.
+- **Multiple monitors:** The compositor currently decides which monitor or desktop
+  the screen action captures.
 
 ## Ubuntu requirements
 
-The Rust dependencies are pure Rust and do not link to GTK, Xlib, Wayland client,
-or `libdbus`, so their development packages and `pkg-config` are not required.
-Install a linker and the desktop portal runtime:
-
 ```bash
 sudo apt update
-sudo apt install build-essential xdg-desktop-portal xdg-desktop-portal-gnome \
+sudo apt install build-essential pkg-config libgtk-4-dev \
+  xdg-desktop-portal xdg-desktop-portal-gnome \
   gnome-shell-extension-appindicator
 ```
 
-Install a current Rust toolchain with [rustup](https://rustup.rs/) if `cargo` and
-`rustc` are not already available. Blink uses Rust edition 2024; distribution
-Rust packages that are too old will not build it.
+The application does not directly link to Xlib, Wayland client libraries, or
+`libdbus`; D-Bus integration is implemented in Rust. AppIndicator support is only
+needed for the tray icon. Install a current Rust toolchain with
+[rustup](https://rustup.rs/) if needed; Blink uses Rust edition 2024.
 
 ## Build and run
 
 ```bash
 cargo build
-cargo run                 # tray application; no main window
-cargo run -- area         # rectangular area
-cargo run -- screen       # screen/desktop
-cargo run -- window       # application window
+cargo run
 ```
 
-For an optimized binary:
+For an optimized user installation:
 
 ```bash
-cargo build --release
 cargo install --path .
+blink
 ```
 
-The installed command is normally `~/.cargo/bin/blink`. Confirm its absolute path
-with `command -v blink` before using it in desktop settings.
+The CLI routes remain available for scripting and diagnostics, but are not the
+primary interface:
 
-## Tray menu
-
-Running `blink` without arguments registers a tray menu containing:
-
-- Capture Area
-- Capture Screen
-- Capture Window
-- Open Screenshots Folder
-- Quit
-
-Capture failures are written to stderr and shown as notifications while the tray
-application is running. Closing the compositor chooser is treated as cancellation,
-not a crash. Console logging is intentionally minimal and no log file is created.
-
-## Keyboard shortcuts on Ubuntu GNOME
-
-Blink does not register global shortcuts itself because GNOME owns the Print key
-bindings and an application should not silently replace them.
-
-1. Build and install Blink with `cargo install --path .`.
-2. Run `command -v blink` and copy the absolute path it prints.
-3. Open **Settings → Keyboard → View and Customize Shortcuts → Screenshots**.
-4. Disable or change each existing GNOME binding you intentionally want Blink to
-   replace. Do not remove bindings you still use.
-5. Go to **Custom Shortcuts**, add these commands using the absolute path:
-
-   | Name | Command | Binding |
-   | --- | --- | --- |
-   | Blink — Area | `/home/you/.cargo/bin/blink area` | `Print` |
-   | Blink — Screen | `/home/you/.cargo/bin/blink screen` | `Shift+Print` |
-   | Blink — Window | `/home/you/.cargo/bin/blink window` | `Alt+Print` |
-
-GNOME will report a conflict when a binding is still assigned. Resolve it
-explicitly rather than allowing Blink to override it silently. The shortcuts
-launch short-lived CLI processes; the tray does not have to be running.
+```bash
+blink area
+blink screen
+blink window
+```
 
 ## Desktop launcher and optional autostart
 
-After `cargo install --path .`, install the launcher for the current user:
+After `cargo install --path .`:
 
 ```bash
 mkdir -p ~/.local/share/applications
 cp data/dev.blink.Blink.desktop ~/.local/share/applications/
 ```
 
-If `blink` is not on the graphical session's `PATH`, edit the copied desktop file
-and replace `Exec=blink` with the absolute path from `command -v blink`.
+If `blink` is not on the graphical session's `PATH`, replace `Exec=blink` in the
+copied launcher with the absolute path printed by `command -v blink`.
 
-To opt into launch-at-login later, copy the same launcher; development does not
-enable this automatically:
+Autostart remains opt-in:
 
 ```bash
 mkdir -p ~/.config/autostart
 cp data/dev.blink.Blink.desktop ~/.config/autostart/
 ```
 
+## Development checks
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo check
+cargo test
+```
+
 ## Manual test checklist
 
-Run these from a graphical terminal in the Ubuntu desktop session:
+From a graphical terminal in the Ubuntu desktop session:
 
-1. `cargo run -- area` — select a rectangle, then verify a PNG and notification.
-2. `cargo run -- screen` — approve the portal if prompted and verify the result.
-3. `cargo run -- window` — select a window in the compositor UI and verify it.
-4. Cancel the area/window chooser and verify Blink exits without a panic or file.
-5. `cargo run` — verify the five tray actions and that Quit removes the icon.
-6. Take two captures within one second and verify the second filename has `-1`.
+1. Run `cargo run` and approve or customize the three global shortcuts.
+2. Click each capture card and verify Blink hides before the portal UI appears.
+3. Verify each PNG and notification under `~/Pictures/Blink`.
+4. Trigger all three actions with the accepted shortcuts while another app is
+   focused.
+5. Open **Configure global shortcuts**, change a binding, and verify the card label
+   updates.
+6. Close the Blink window, restore it from the tray, and test the tray actions.
+7. Cancel a capture chooser and verify no file or crash occurs.
 
 ## Known limitations
 
-- Exact target filtering requires Screenshot portal v3. Older Ubuntu portal
-  backends can present a general chooser even when `area` or `window` was asked
-  for.
+- Global shortcut availability and configuration UI depend on the desktop portal
+  backend. Current GNOME and KDE portal backends support it; older releases may
+  not.
+- Exact screenshot target filtering requires Screenshot portal v3.
 - Multi-monitor selection and a dedicated native X11 backend are not implemented.
-- Tray visibility depends on the desktop providing a StatusNotifierItem watcher.
-- There is no single-instance guard, so launching `blink` repeatedly without a
-  subcommand can create more than one tray process.
-- GNOME shortcut setup is manual by design.
+- Tray visibility depends on a StatusNotifierItem/AppIndicator host.
+- Blink does not yet prevent multiple simultaneously running instances.
 
-## Next steps
+## Next step
 
-The next smallest improvement is a single-instance D-Bus application service:
-subsequent `blink` invocations could forward capture requests to the existing tray
-process instead of creating separate short-lived processes. After that, a native
-X11 backend can be added without changing the CLI, saving, or tray layers.
+The next smallest improvement is single-instance application activation. A second
+Blink launch should focus the existing window, and CLI capture requests should be
+forwarded to that process rather than starting another instance.
